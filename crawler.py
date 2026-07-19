@@ -316,9 +316,13 @@ def crawl(config):
                         if len(text) > 12000:
                             text = text[:12000]
 
-                        # We still need HTML for link extraction.
-                        if "html_content" not in locals():
+                        # We still need HTML for link extraction. Avoid an extra full
+                        # DOM dump on pages where we already failed to render text.
+                        try:
                             html_content = page.content()
+                        except Exception:
+                            html_content = ""
+
 
                         # Cap term processing; too many terms can explode CPU.
                         terms_limited = search_terms[:20]
