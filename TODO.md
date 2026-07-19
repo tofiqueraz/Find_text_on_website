@@ -1,15 +1,25 @@
-# TODO
+# TODO - Render Free stability optimizations
 
-- [x] Update `app.py` to reduce default `max_pages` to 8 (from 50).
-- [x] Update `crawler.py` to cap per-page processing time (fixed Playwright timeout) and truncate visible text length before regex matching.
-- [x] Update `crawler.py` to reduce `networkidle` wait time to ~250ms (or remove it) to reduce crawl latency.
-- [x] Sanity check for syntax errors.
-- [ ] Deploy to Render and verify crawl completes without 502/worker timeout.
-
-- [x] Fix Render 502 by reducing worst-case Playwright cost (optional: reduce max_pages default, and tighten per-page text wait / timeouts). 
+## Step 1 (Crawl stability)
+- [x] Refactor `crawler.py` to avoid loading large HTML twice per page.
+- [x] Extract links via DOM evaluation (`eval_on_selector_all`) instead of `page.content()` + BeautifulSoup for link graph.
 
 
+## Step 2 (Memory + CPU caps)
+- [ ] Add caps: `max_queue_size`, `max_links_per_page`, `max_findings`.
+- [ ] Remove/limit per-page `gc.collect()` and reduce unnecessary waits (drop `networkidle`).
 
-- [x] Fix dynamic inner-page text loading (wait for meaningful `document.body.innerText` before extracting visible text) so terms like “gummies” are found reliably on ~20 inner pages.
+## Step 3 (Playwright resource blocking)
+- [ ] Add `context.route()` to abort images/media/fonts to reduce memory.
 
+## Step 4 (Regex performance)
+- [ ] Precompile term matchers/patterns once per crawl.
+
+## Step 5 (Timeout alignment)
+- [ ] Adjust `render.yaml` / Gunicorn `--timeout` to exceed `max_total_runtime_s`.
+- [ ] Keep `/crawl` functionality + UI unchanged.
+
+## Step 6 (Validation)
+- [ ] Local run sanity check on a small site.
+- [ ] Trigger crawl to confirm no worker timeout.
 

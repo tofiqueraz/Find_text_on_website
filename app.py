@@ -58,6 +58,10 @@ def do_crawl():
         "start_url": url,
         "search_terms": terms,
         "max_pages": 15,
+        # Prevent unbounded memory growth on Render Free.
+        "max_queue_size": 120,
+        "max_findings": 200,
+
 
 
 

@@ -132,23 +132,25 @@ def is_crawlable(url):
 
 
 def extract_links(html_text, base_url):
+    """Fallback link extraction using BeautifulSoup.
+
+    Prefer DOM-based extraction inside Playwright for performance/memory
+    stability on constrained environments.
+    """
     soup = BeautifulSoup(html_text, "html.parser")
     links = set()
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         if not href:
             continue
-
         # Skip javascript/mailto anchors and other non-http(s) targets early.
         if href.startswith(("mailto:", "tel:", "javascript:")):
             continue
-
         absolute = urljoin(base_url, href)
         absolute = normalize_url(absolute)
         if is_crawlable(absolute):
             links.add(absolute)
 
-    # Return stable order to improve reproducibility.
     return links
 
 
@@ -166,7 +168,23 @@ def get_visible_text(html_text, max_chars: int = 20000):
 
 
 
-def find_term_matches(text, terms, case_sensitive):
+def _compile_term_patterns(terms, case_sensitive):
+    """Compile regex patterns once per crawl to reduce CPU on Render."""
+    flags = 0 if case_sensitive else re.IGNORECASE
+    compiled = []
+
+    for term in terms:
+        term_str = str(term)
+        if term_str and re.fullmatch(r"[A-Za-z0-9_]+", term_str):
+            pattern = re.compile(r"\b" + re.escape(term_str) + r"\b", flags)
+        else:
+            pattern = re.compile(re.escape(term_str), flags)
+        compiled.append((term_str, pattern))
+
+    return compiled
+
+
+def find_term_matches(text, compiled_terms):
     # Safety: if text is empty/too small, avoid regex work.
     if not text:
         return []
@@ -176,17 +194,7 @@ def find_term_matches(text, terms, case_sensitive):
     results = []
     flags = 0 if case_sensitive else re.IGNORECASE
 
-    for term in terms:
-        term_str = str(term)
-
-
-        # If term is strictly "wordy" keep \b behavior.
-        if term_str and re.fullmatch(r"[A-Za-z0-9_]+", term_str):
-            pattern = re.compile(r"\b" + re.escape(term_str) + r"\b", flags)
-        else:
-            # Fallback for numeric/non-word heavy tokens around punctuation.
-            pattern = re.compile(re.escape(term_str), flags)
-
+    for term_str, pattern in compiled_terms:
         matches = list(pattern.finditer(text))
         if not matches:
             continue
@@ -219,6 +227,10 @@ def crawl(config):
     queue = deque([start_url])
     visited = set()
     findings = []
+
+    # Hard caps to prevent queue/findings from growing unbounded on small RAM.
+    max_queue_size = int(config.get("max_queue_size", 150))
+    max_findings = int(config.get("max_findings", 200))
 
     consecutive_failures = 0
     max_consecutive_failures = 8
@@ -253,6 +265,17 @@ def crawl(config):
                 ignore_https_errors=True,
             )
 
+            # Resource blocking to reduce memory/CPU on Render Free.
+            # Keep it conservative: still render HTML/JS.
+            def _route_handler(route):
+                req = route.request
+                rtype = req.resource_type
+                if rtype in {"image", "media", "font"}:
+                    return route.abort()
+                return route.continue_()
+
+            context.route("**/*", _route_handler)
+
             try:
                 while queue and len(visited) < max_pages:
                     # Global budget guard (helps avoid Render 502 / worker kill).
@@ -275,15 +298,10 @@ def crawl(config):
                         page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
 
                         # Render may populate key content after DOMContentLoaded.
-                        # Wait briefly for the page to have “meaningful” innerText.
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=250)
-                        except PlaywrightTimeoutError:
-                            pass
+                        # Keep waits very small on Render Free (1 CPU / 512MB).
+                        dynamic_wait_ms = min(timeout_ms, 650)
 
                         # Safety-bounded dynamic wait (helps pages that load text via JS)
-                        dynamic_wait_ms = min(timeout_ms, 900)
-
                         try:
                             page.wait_for_function(
                                 "() => document.body && document.body.innerText && document.body.innerText.length > 80",
@@ -293,7 +311,7 @@ def crawl(config):
                             pass
 
                         # Keep per-page processing time bounded even if the page is slow.
-                        page.set_default_timeout(min(timeout_ms, 2500))
+                        page.set_default_timeout(min(timeout_ms, 2000))
 
 
 
@@ -316,23 +334,50 @@ def crawl(config):
                         if len(text) > 12000:
                             text = text[:12000]
 
-                        # We still need HTML for link extraction. Avoid an extra full
-                        # DOM dump on pages where we already failed to render text.
+                        # We need links, but avoid large HTML dumps.
+                        # Use DOM evaluation to collect hrefs directly.
+                        links = []
                         try:
-                            html_content = page.content()
+                            hrefs = page.eval_on_selector_all(
+                                "a[href]",
+                                "els => els.map(e => e.getAttribute('href')).filter(Boolean)",
+                            )
+                            # Normalize and filter
+                            for href in hrefs[:150]:
+                                href = str(href).strip()
+                                if not href:
+                                    continue
+                                if href.startswith(("mailto:", "tel:", "javascript:")):
+                                    continue
+                                absolute = normalize_url(urljoin(final_url, href))
+                                if is_crawlable(absolute):
+                                    links.append(absolute)
                         except Exception:
-                            html_content = ""
+                            # Fallback to BeautifulSoup parsing (slower/heavier).
+                            try:
+                                html_content = page.content()
+                            except Exception:
+                                html_content = ""
+                            links = list(extract_links(html_content, final_url))
 
+                        # Cap link count per page.
+                        if links:
+                            links = links[:50]
 
                         # Cap term processing; too many terms can explode CPU.
                         terms_limited = search_terms[:20]
+                        compiled_terms = _compile_term_patterns(terms_limited, case_sensitive)
 
-
-                        matches = find_term_matches(text, terms_limited, case_sensitive)
-
+                        matches = find_term_matches(text, compiled_terms)
 
                         if matches:
                             for m in matches:
+                                # Cap total findings to prevent unbounded memory growth.
+                                max_findings = int(config.get("max_findings", 200))
+                                if len(findings) >= max_findings:
+                                    abort_reason = "Result cap reached"
+                                    break
+
                                 findings.append(
                                     {
                                         "url": final_url,
@@ -343,8 +388,9 @@ def crawl(config):
                                     }
                                 )
 
-                        # Extracting & crawling links can also explode work; cap link count per page.
-                        links = list(extract_links(html_content, final_url))[:50]
+                        # Stop early if we hit result cap.
+                        if abort_reason == "Result cap reached":
+                            break
 
                         # Fallback: landing pages sometimes have no crawlable <a href> links
                         # in the HTML we receive (or they get filtered). Ensure we can still
@@ -363,6 +409,8 @@ def crawl(config):
                                 "/shop",
                             )
                             for pth in fallback_paths:
+                                if len(queue) >= max_queue_size:
+                                    break
                                 candidate = normalize_url(base_root + pth)
                                 if not candidate or candidate in visited or candidate in queue:
                                     continue
@@ -375,6 +423,8 @@ def crawl(config):
                         # Always enqueue links discovered on the page; do not require
                         # the link to already be in the queue (only de-dupe via `visited`).
                         for link in links:
+                            if len(queue) >= max_queue_size:
+                                break
 
                             if link in visited:
                                 continue
@@ -409,7 +459,8 @@ def crawl(config):
                                 page.close()
                             except Exception:
                                 pass
-                        gc.collect()
+                        # Let Python/Chromium free memory; avoid per-page gc.collect()
+                        # which can increase CPU and reduce throughput on Render Free.
 
             finally:
                 context.close()
