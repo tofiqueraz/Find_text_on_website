@@ -57,7 +57,9 @@ def do_crawl():
     config = {
         "start_url": url,
         "search_terms": terms,
-        "max_pages": 20,
+        # Render worker memory/time is limited; default to a smaller crawl.
+        "max_pages": 12,
+
 
 
         "same_domain_only": True,
