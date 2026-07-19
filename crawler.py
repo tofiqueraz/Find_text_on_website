@@ -143,14 +143,23 @@ def extract_links(html_text, base_url):
     return links
 
 
-def get_visible_text(html_text):
+def get_visible_text(html_text, max_chars: int = 20000):
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-    return soup.get_text(separator=" ", strip=True)
+    text = soup.get_text(separator=" ", strip=True)
+    # Hard cap to avoid memory/CPU blow-ups on very large pages.
+    if len(text) > max_chars:
+        text = text[:max_chars]
+    return text
+
 
 
 def find_term_matches(text, terms, case_sensitive):
+    # Safety: if text is empty/too small, avoid regex work.
+    if not text:
+        return []
+
     """Find occurrences of each term in the visible page text."""
 
     results = []
@@ -238,19 +247,32 @@ def crawl(config):
                     try:
                         page = context.new_page()
                         page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                        # Render is resource-constrained; keep this short to avoid long waits.
                         try:
-                            page.wait_for_load_state("networkidle", timeout=2000)
+                            page.wait_for_load_state("networkidle", timeout=250)
                         except PlaywrightTimeoutError:
                             pass
 
+
+                        # Keep per-page processing time bounded even if the page is slow.
+                        # (Used mainly as a safety valve for Render timeouts.)
+                        page.set_default_timeout(min(timeout_ms, 8000))
+
                         final_url = normalize_url(page.url)
+
                         root_netloc = urlparse(final_url).netloc
 
                         html_content = page.content()
                         title = page.title()
 
-                        text = get_visible_text(html_content)
-                        matches = find_term_matches(text, search_terms, case_sensitive)
+                        # Cap text size and processing to keep Render worker stable.
+                        text = get_visible_text(html_content, max_chars=20000)
+
+                        # Cap term processing; too many terms can explode CPU.
+                        terms_limited = search_terms[:20]
+
+                        matches = find_term_matches(text, terms_limited, case_sensitive)
+
 
                         if matches:
                             for m in matches:
@@ -264,7 +286,9 @@ def crawl(config):
                                     }
                                 )
 
-                        links = extract_links(html_content, final_url)
+                        # Extracting & crawling links can also explode work; cap link count per page.
+                        links = list(extract_links(html_content, final_url))[:50]
+
                         for link in links:
                             if link in visited:
                                 continue
