@@ -176,6 +176,7 @@ def find_term_matches(text, terms, case_sensitive):
     for term in terms:
         term_str = str(term)
 
+
         # If term is strictly "wordy" keep \b behavior.
         if term_str and re.fullmatch(r"[A-Za-z0-9_]+", term_str):
             pattern = re.compile(r"\b" + re.escape(term_str) + r"\b", flags)
