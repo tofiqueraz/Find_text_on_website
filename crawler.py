@@ -6,6 +6,8 @@ import re
 import sys
 import os
 import gc
+import time
+
 from pathlib import Path
 from collections import deque
 from urllib.parse import urljoin, urlparse, urldefrag
