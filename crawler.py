@@ -163,6 +163,7 @@ def get_visible_text(html_text, max_chars: int = 20000):
 
 
 
+
 def find_term_matches(text, terms, case_sensitive):
     # Safety: if text is empty/too small, avoid regex work.
     if not text:
@@ -266,18 +267,18 @@ def crawl(config):
                             pass
 
                         # Safety-bounded dynamic wait (helps pages that load text via JS)
-                        dynamic_wait_ms = min(timeout_ms, 5000)
+                        dynamic_wait_ms = min(timeout_ms, 2500)
                         try:
                             page.wait_for_function(
-                                "() => document.body && document.body.innerText && document.body.innerText.length > 200",
+                                "() => document.body && document.body.innerText && document.body.innerText.length > 100",
                                 timeout=dynamic_wait_ms,
                             )
                         except PlaywrightTimeoutError:
                             pass
 
                         # Keep per-page processing time bounded even if the page is slow.
-                        # (Used mainly as a safety valve for Render timeouts.)
-                        page.set_default_timeout(min(timeout_ms, 8000))
+                        page.set_default_timeout(min(timeout_ms, 4000))
+
 
                         final_url = normalize_url(page.url)
 
