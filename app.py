@@ -65,7 +65,9 @@ def do_crawl():
         "same_domain_only": True,
         "case_sensitive": False,
         "headless": True,
-        "timeout_ms": timeout * 1000,
+        # Keep per-page work bounded so Render workers don't get SIGKILL.
+        "timeout_ms": min(timeout * 1000, 20000),
+
     }
 
     start_time = time.time()

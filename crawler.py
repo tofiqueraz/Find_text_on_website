@@ -267,7 +267,8 @@ def crawl(config):
                             pass
 
                         # Safety-bounded dynamic wait (helps pages that load text via JS)
-                        dynamic_wait_ms = min(timeout_ms, 2500)
+                        dynamic_wait_ms = min(timeout_ms, 1500)
+
                         try:
                             page.wait_for_function(
                                 "() => document.body && document.body.innerText && document.body.innerText.length > 100",
@@ -284,15 +285,28 @@ def crawl(config):
 
                         root_netloc = urlparse(final_url).netloc
 
-                        html_content = page.content()
                         title = page.title()
 
-                        # Cap text size and processing to keep Render worker stable.
-                        text = get_visible_text(html_content, max_chars=20000)
+                        # Avoid storing/processing huge HTML blobs.
+                        # Extract text directly from the live DOM.
+                        text = ""
+                        try:
+                            text = page.inner_text("body", timeout=1000)
+                        except Exception:
+                            html_content = page.content()
+                            text = get_visible_text(html_content, max_chars=12000)
 
+                        # Cap text size and processing to keep Render worker stable.
+                        if len(text) > 12000:
+                            text = text[:12000]
+
+                        # We still need HTML for link extraction.
+                        if "html_content" not in locals():
+                            html_content = page.content()
 
                         # Cap term processing; too many terms can explode CPU.
                         terms_limited = search_terms[:20]
+
 
                         matches = find_term_matches(text, terms_limited, case_sensitive)
 
@@ -362,7 +376,9 @@ def crawl(config):
                     except Exception as e:
                         print(f"Error -> {url}")
                         print(e)
+                        # Don’t let one bad page kill the crawl.
                         consecutive_failures += 1
+
                         if consecutive_failures >= max_consecutive_failures:
                             abort_reason = "Too many errors"
                             break
