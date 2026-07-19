@@ -67,9 +67,12 @@ def do_crawl():
         "case_sensitive": False,
         "headless": True,
         # Keep per-page work bounded so Render workers don't get SIGKILL.
-        "timeout_ms": min(timeout * 1000, 20000),
+        "timeout_ms": min(timeout * 1000, 12000),
+        # Global guard for Render request runtime.
+        "max_total_runtime_s": 70,
 
     }
+
 
     start_time = time.time()
     try:

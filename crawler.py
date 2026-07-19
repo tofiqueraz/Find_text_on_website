@@ -202,7 +202,9 @@ def find_term_matches(text, terms, case_sensitive):
 
 
 def crawl(config):
+    start_time_overall = time.time()
     start_url = normalize_url(config["start_url"])
+
     root_netloc = urlparse(start_url).netloc
     search_terms = config["search_terms"]
 
@@ -219,6 +221,11 @@ def crawl(config):
     consecutive_failures = 0
     max_consecutive_failures = 8
     abort_reason = None
+
+    # Render workers may be killed before Playwright timeouts if the
+    # overall request takes too long. Keep a global budget.
+    max_total_runtime_s = float(config.get("max_total_runtime_s", 80))
+
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -246,7 +253,13 @@ def crawl(config):
 
             try:
                 while queue and len(visited) < max_pages:
+                    # Global budget guard (helps avoid Render 502 / worker kill).
+                    if time.time() - start_time_overall > max_total_runtime_s:
+                        abort_reason = "Global runtime limit reached"
+                        break
+
                     url = queue.popleft()
+
                     if url in visited:
                         continue
 
@@ -267,18 +280,19 @@ def crawl(config):
                             pass
 
                         # Safety-bounded dynamic wait (helps pages that load text via JS)
-                        dynamic_wait_ms = min(timeout_ms, 1500)
+                        dynamic_wait_ms = min(timeout_ms, 900)
 
                         try:
                             page.wait_for_function(
-                                "() => document.body && document.body.innerText && document.body.innerText.length > 100",
+                                "() => document.body && document.body.innerText && document.body.innerText.length > 80",
                                 timeout=dynamic_wait_ms,
                             )
                         except PlaywrightTimeoutError:
                             pass
 
                         # Keep per-page processing time bounded even if the page is slow.
-                        page.set_default_timeout(min(timeout_ms, 4000))
+                        page.set_default_timeout(min(timeout_ms, 2500))
+
 
 
                         final_url = normalize_url(page.url)
