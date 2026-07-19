@@ -57,7 +57,8 @@ def do_crawl():
     config = {
         "start_url": url,
         "search_terms": terms,
-        "max_pages": 20,
+        "max_pages": 15,
+
 
 
 
