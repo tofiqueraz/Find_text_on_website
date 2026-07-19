@@ -136,11 +136,19 @@ def extract_links(html_text, base_url):
         href = a["href"].strip()
         if not href:
             continue
+
+        # Skip javascript/mailto anchors and other non-http(s) targets early.
+        if href.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+
         absolute = urljoin(base_url, href)
         absolute = normalize_url(absolute)
         if is_crawlable(absolute):
             links.add(absolute)
+
+    # Return stable order to improve reproducibility.
     return links
+
 
 
 def get_visible_text(html_text, max_chars: int = 20000):
@@ -245,14 +253,26 @@ def crawl(config):
 
                     page = None
                     try:
+
                         page = context.new_page()
                         page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                        # Render is resource-constrained; keep this short to avoid long waits.
+
+                        # Render may populate key content after DOMContentLoaded.
+                        # Wait briefly for the page to have “meaningful” innerText.
                         try:
                             page.wait_for_load_state("networkidle", timeout=250)
                         except PlaywrightTimeoutError:
                             pass
 
+                        # Safety-bounded dynamic wait (helps pages that load text via JS)
+                        dynamic_wait_ms = min(timeout_ms, 5000)
+                        try:
+                            page.wait_for_function(
+                                "() => document.body && document.body.innerText && document.body.innerText.length > 200",
+                                timeout=dynamic_wait_ms,
+                            )
+                        except PlaywrightTimeoutError:
+                            pass
 
                         # Keep per-page processing time bounded even if the page is slow.
                         # (Used mainly as a safety valve for Render timeouts.)
@@ -267,6 +287,7 @@ def crawl(config):
 
                         # Cap text size and processing to keep Render worker stable.
                         text = get_visible_text(html_content, max_chars=20000)
+
 
                         # Cap term processing; too many terms can explode CPU.
                         terms_limited = search_terms[:20]
@@ -289,13 +310,43 @@ def crawl(config):
                         # Extracting & crawling links can also explode work; cap link count per page.
                         links = list(extract_links(html_content, final_url))[:50]
 
+                        # Fallback: landing pages sometimes have no crawlable <a href> links
+                        # in the HTML we receive (or they get filtered). Ensure we can still
+                        # progress by enqueueing a few likely same-domain internal URLs.
+                        if not links:
+                            parsed_base = urlparse(final_url)
+                            base_root = f"{parsed_base.scheme}://{parsed_base.netloc}"
+                            fallback_paths = (
+                                "/",
+                                "/about",
+                                "/products",
+                                "/product",
+                                "/services",
+                                "/contact",
+                                "/blog",
+                                "/shop",
+                            )
+                            for pth in fallback_paths:
+                                candidate = normalize_url(base_root + pth)
+                                if not candidate or candidate in visited or candidate in queue:
+                                    continue
+                                if not is_crawlable(candidate):
+                                    continue
+                                if same_only and not same_domain(candidate, root_netloc):
+                                    continue
+                                queue.append(candidate)
+
+                        # Always enqueue links discovered on the page; do not require
+                        # the link to already be in the queue (only de-dupe via `visited`).
                         for link in links:
+
                             if link in visited:
                                 continue
                             if same_only and not same_domain(link, root_netloc):
                                 continue
                             if link not in queue:
                                 queue.append(link)
+
 
                         consecutive_failures = 0
 
