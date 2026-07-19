@@ -1,0 +1,11 @@
+{
+  "start_url": "https://example.com",
+  "search_terms": ["drime", "trim", "find", "products"],
+  "max_pages": 200,
+  "same_domain_only": true,
+  "case_sensitive": false,
+  "headless": true,
+  "timeout_ms": 30000,
+  "output_csv": "results.csv",
+  "output_html": "results.html"
+}

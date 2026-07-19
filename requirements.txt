@@ -1,0 +1,4 @@
+playwright==1.48.0
+beautifulsoup4==4.12.3
+flask==3.0.3
+gunicorn==22.0.0

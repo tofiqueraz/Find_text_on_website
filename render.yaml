@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: Find_text_on_website
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+    startCommand: gunicorn app:app

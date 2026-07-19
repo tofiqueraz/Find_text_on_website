@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search Results — Find Text</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f6fa; margin: 0; padding: 24px; color: #222;
+  }
+  .topbar {
+    background: #fff; padding: 20px 28px; border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06); margin-bottom: 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 16px;
+  }
+  h1 { margin: 0; font-size: 22px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn {
+    padding: 10px 18px; border-radius: 6px; text-decoration: none;
+    font-size: 14px; font-weight: 600; display: inline-block;
+    transition: all 0.15s;
+  }
+  .btn-primary { background: #667eea; color: #fff; }
+  .btn-primary:hover { background: #5568d3; }
+  .btn-secondary { background: #e8eaf6; color: #3949ab; }
+  .btn-secondary:hover { background: #c5cae9; }
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px; margin-bottom: 20px;
+  }
+  .stat {
+    background: #fff; padding: 18px; border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .stat-label { color: #777; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 26px; font-weight: 700; color: #333; margin-top: 4px; }
+  .meta {
+    background: #fff; padding: 18px 24px; border-radius: 10px;
+    margin-bottom: 20px; font-size: 14px; line-height: 1.6;
+  }
+  .meta strong { color: #555; }
+  .term-pill {
+    display: inline-block; background: #ffe680; color: #5a4500;
+    padding: 3px 10px; border-radius: 12px; font-weight: 600;
+    font-size: 12px; margin: 2px;
+  }
+  table {
+    width: 100%; border-collapse: collapse; background: #fff;
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  th, td {
+    padding: 12px 14px; text-align: left; vertical-align: top;
+    border-bottom: 1px solid #eee; font-size: 14px;
+  }
+  th {
+    background: #f0f2f7; font-weight: 600; color: #444;
+    position: sticky; top: 0;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafbfd; }
+  td a { color: #1565c0; text-decoration: none; word-break: break-all; }
+  td a:hover { text-decoration: underline; }
+  .count-cell { text-align: center; font-weight: 700; color: #d84315; }
+  .term-cell .term-pill { display: inline-block; }
+  .snippet { color: #555; font-style: italic; font-size: 13px; margin: 4px 0; }
+  .snippet mark { background: #fff3a0; padding: 1px 3px; border-radius: 2px; font-style: normal; }
+  .empty {
+    background: #fff; padding: 60px; text-align: center; border-radius: 10px;
+    color: #888; font-size: 16px;
+  }
+  .warning {
+    background: #fff8e1; border-left: 4px solid #ffa000;
+    padding: 14px 18px; border-radius: 6px; margin-bottom: 16px;
+    color: #5a4500; font-size: 14px; line-height: 1.5;
+  }
+  .warning strong { color: #b26a00; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>🔎 Search Results</h1>
+    <div class="actions">
+      <a href="/" class="btn btn-secondary">← New Search</a>
+      {% if csv_available %}<a href="/download/csv" class="btn btn-primary">⬇ Download CSV</a>{% endif %}
+      {% if html_available %}<a href="/download/html" class="btn btn-primary">⬇ Download HTML</a>{% endif %}
+    </div>
+  </div>
+
+  {% if abort_reason %}
+  <div class="warning"><strong>Crawl stopped early:</strong> {{ abort_reason }}</div>
+  {% endif %}
+  {% if file_warning %}
+  <div class="warning"><strong>File write issue:</strong> {{ file_warning }}</div>
+  {% endif %}
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Pages Crawled</div>
+      <div class="stat-value">{{ pages_crawled }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Matches Found</div>
+      <div class="stat-value">{{ findings|length }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total Hits</div>
+      <div class="stat-value">{{ total_hits }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Duration</div>
+      <div class="stat-value">{{ duration }}s</div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div><strong>Start URL:</strong> <a href="{{ start_url }}" target="_blank">{{ start_url }}</a></div>
+    <div style="margin-top:8px"><strong>Search terms:</strong>
+      {% for t in terms %}<span class="term-pill">{{ t }}</span>{% endfor %}
+    </div>
+  </div>
+
+  {% if findings %}
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 30%">URL</th>
+        <th style="width: 18%">Page Title</th>
+        <th style="width: 12%">Term</th>
+        <th style="width: 8%">Count</th>
+        <th>Snippets</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in findings %}
+      <tr>
+        <td><a href="{{ row.url }}" target="_blank">{{ row.url }}</a></td>
+        <td>{{ row.title }}</td>
+        <td class="term-cell"><span class="term-pill">{{ row.term }}</span></td>
+        <td class="count-cell">{{ row.count }}</td>
+        <td>
+          {% for s in row.snippets %}
+          <div class="snippet">…{{ s|safe }}…</div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    No matches found across {{ pages_crawled }} page(s).
+  </div>
+  {% endif %}
+</body>
+</html>
