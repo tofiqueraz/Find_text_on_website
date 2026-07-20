@@ -192,7 +192,7 @@ def find_term_matches(text, compiled_terms):
     """Find occurrences of each term in the visible page text."""
 
     results = []
-    flags = 0 if case_sensitive else re.IGNORECASE
+
 
     for term_str, pattern in compiled_terms:
         matches = list(pattern.finditer(text))
@@ -218,11 +218,15 @@ def crawl(config):
     root_netloc = urlparse(start_url).netloc
     search_terms = config["search_terms"]
 
-    max_pages = min(int(config.get("max_pages", 50)), 50)
     same_only = bool(config.get("same_domain_only", True))
     case_sensitive = bool(config.get("case_sensitive", False))
     headless = bool(config.get("headless", True))
     timeout_ms = int(config.get("timeout_ms", 30000))
+
+
+    max_pages = min(int(config.get("max_pages", 50)), 50)
+
+
 
     queue = deque([start_url])
     visited = set()
@@ -285,11 +289,12 @@ def crawl(config):
 
                     url = queue.popleft()
 
-                    if url in visited:
-                        continue
+                    # NOTE: Do not mark visited until after page.goto(), because
+                    # many sites redirect (http->https, add/remove www, etc.).
+                    # If we dedupe on the pre-redirect URL, we may under-crawl.
 
-                    visited.add(url)
-                    print(f"[{len(visited)}/{max_pages}] Crawling: {url}")
+                    print(f"Crawling queued URL: {url}")
+
 
                     page = None
                     try:
@@ -317,7 +322,15 @@ def crawl(config):
 
                         final_url = normalize_url(page.url)
 
+                        # De-dupe using the canonical (post-redirect) URL.
+                        if final_url in visited:
+                            continue
+
+                        visited.add(final_url)
+                        print(f"[{len(visited)}/{max_pages}] Crawling: {final_url}")
+
                         root_netloc = urlparse(final_url).netloc
+
 
                         title = page.title()
 
@@ -366,9 +379,10 @@ def crawl(config):
 
                         # Cap term processing; too many terms can explode CPU.
                         terms_limited = search_terms[:20]
-                        compiled_terms = _compile_term_patterns(terms_limited, case_sensitive)
+                        compiled_terms = _compile_term_patterns(terms_limited, bool(config.get("case_sensitive", False)))
 
                         matches = find_term_matches(text, compiled_terms)
+
 
                         if matches:
                             for m in matches:
@@ -445,8 +459,11 @@ def crawl(config):
 
                     except Exception as e:
                         print(f"Error -> {url}")
-                        print(e)
-                        # Don’t let one bad page kill the crawl.
+                        import traceback
+                        traceback.print_exc()
+
+                    # Don’t let one bad page kill the crawl.
+
                         consecutive_failures += 1
 
                         if consecutive_failures >= max_consecutive_failures:
