@@ -59,7 +59,7 @@ def do_crawl():
         "search_terms": terms,
         # Render instances often have tight memory limits; a very high max_pages can OOM-kill the worker.
         # Keeping this conservative helps avoid SIGKILL while preserving core functionality.
-        "max_pages": 500,
+        "max_pages": 10,
         "same_domain_only": True,
         "case_sensitive": False,
         "headless": True,

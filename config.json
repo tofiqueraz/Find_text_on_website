@@ -1,7 +1,7 @@
 {
   "start_url": "https://example.com",
   "search_terms": ["drime", "trim", "find", "products"],
-  "max_pages": 200,
+"max_pages":10,
   "same_domain_only": true,
   "case_sensitive": false,
   "headless": true,

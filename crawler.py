@@ -210,15 +210,46 @@ def crawl(config):
         print("=" * 60)
 
         try:
-            browser = p.chromium.launch(headless=headless)
+            browser = p.chromium.launch(
+                headless=headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
         except Exception:
             # One more attempt after download.
             print("Launch failed; retrying after ensuring Chromium is installed...", flush=True)
             ensure_chromium_installed()
-            browser = p.chromium.launch(headless=headless)
+            browser = p.chromium.launch(
+                headless=headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
 
         context = browser.new_context()
         page = context.new_page()
+
+        # Block resource-heavy content to reduce memory usage.
+        page.route(
+            "**/*",
+            lambda route: (
+                route.abort()
+                if route.request.resource_type in (
+                    "image",
+                    "stylesheet",
+                    "font",
+                    "media",
+                )
+                else route.continue_()
+            )
+        )
 
         while queue and len(visited) < max_pages:
             url = queue.popleft()
@@ -229,11 +260,11 @@ def crawl(config):
             print(f"[{len(visited)}/{max_pages}] Crawling: {url}")
 
             try:
-                page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                try:
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except PlaywrightTimeoutError:
-                    pass
+                page.goto(
+                    url,
+                    timeout=15000,
+                    wait_until="domcontentloaded",
+                )
 
                 html_content = page.content()
                 title = page.title()
@@ -283,6 +314,8 @@ def crawl(config):
                 if link not in queue:
                     queue.append(link)
 
+        page.close()
+        context.close()
         browser.close()
 
     if abort_reason:

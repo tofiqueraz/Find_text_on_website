@@ -5,4 +5,4 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install chromium
-    startCommand: gunicorn app:app --workers 1 --threads 1 --timeout 120 --graceful-timeout 30 --worker-tmp-dir /dev/shm
+    startCommand: gunicorn app:app --workers 1 --threads 1 --timeout 300 --graceful-timeout 30 --worker-tmp-dir /dev/shm
