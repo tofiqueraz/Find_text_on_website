@@ -1,6 +1,7 @@
 import html
 import re
 import time
+import traceback
 from pathlib import Path
 
 from flask import (
@@ -70,8 +71,14 @@ def do_crawl():
     try:
         findings, visited, abort_reason = crawl(config)
     except Exception as e:
+        traceback.print_exc()
+        print("=" * 80)
+        print("CRAWL ERROR")
+        print(repr(e))
+        print("=" * 80)
+
         return render_template("index.html",
-                               error=f"Crawl failed: {e}",
+                               error=str(e),
                                url=url, terms=terms_raw, timeout=timeout)
     duration = round(time.time() - start_time, 1)
 
