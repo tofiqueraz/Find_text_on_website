@@ -251,6 +251,8 @@ def crawl(config):
             )
         )
 
+        print("Queue size:", len(queue))
+
         while queue and len(visited) < max_pages:
             url = queue.popleft()
             if url in visited:
@@ -262,12 +264,21 @@ def crawl(config):
             try:
                 page.goto(
                     url,
-                    timeout=15000,
+                    timeout=timeout_ms,
                     wait_until="domcontentloaded",
                 )
+                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_timeout(5000)
 
                 html_content = page.content()
+                links = extract_links(html_content, url)
+                print("=" * 60)
+                print("Links found:", len(links))
+                for l in list(links)[:20]:
+                    print(l)
+                print("=" * 60)
                 title = page.title()
+                print("TITLE:", title)
                 consecutive_failures = 0
             except PlaywrightTimeoutError:
                 print(f"  ! Timeout: {url}")
@@ -306,13 +317,17 @@ def crawl(config):
                         }
                     )
 
-            for link in extract_links(html_content, url):
+            print("Root:", root_netloc)
+            for link in links:
+                print("Link:", urlparse(link).netloc)
                 if link in visited:
                     continue
                 if same_only and not same_domain(link, root_netloc):
                     continue
                 if link not in queue:
                     queue.append(link)
+
+            print("Queue after extraction:", len(queue))
 
         page.close()
         context.close()
