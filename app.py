@@ -84,9 +84,24 @@ def _load_job(job_id: str) -> dict | None:
         return None
 
 
-def _run_job(job_id: str, config: dict, terms: list[str]):
+import traceback
+
+
+def _progress_callback(job_id: str, pages_crawled: int, current_url: str):
+    """Update in-memory and on-disk job state with crawl progress."""
+    if job_id in JOBS:
+        JOBS[job_id]["pages_crawled"] = pages_crawled
+        JOBS[job_id]["current_url"] = current_url
+        _save_job(job_id)
+
+
+def _run_job(job_id: str, config: dict, terms: list[str], start_ts: float):
     try:
-        findings, visited, abort_reason = crawl(config)
+        # Create a closure that captures job_id for progress updates.
+        def progress(pages, url):
+            _progress_callback(job_id, pages, url)
+
+        findings, visited, abort_reason = crawl(config, progress_callback=progress)
 
         # Highlight snippets once for HTML output.
         for row in findings:
@@ -111,20 +126,22 @@ def _run_job(job_id: str, config: dict, terms: list[str]):
             terms,
         )
 
+        duration = round(time.time() - start_ts, 1)
         JOBS[job_id].update(
             {
                 "status": "done",
                 "abort_reason": abort_reason,
                 "pages_crawled": len(visited),
                 "total_hits": total_hits,
-                "duration": JOBS[job_id]["duration"],
+                "duration": duration,
                 "csv_ready": True,
                 "html_ready": True,
             }
         )
         _save_job(job_id)
     except Exception as e:
-        JOBS[job_id].update({"status": "error", "error": str(e)})
+        JOBS[job_id].update({"status": "error", "error": traceback.format_exc()})
+        print(traceback.format_exc(), flush=True)
         _save_job(job_id)
 
 
@@ -183,11 +200,10 @@ def do_crawl():
 
     def _thread_target():
         try:
-            JOBS[job_id]["duration"] = round(time.time() - start_ts, 1)
-            _save_job(job_id)
-            _run_job(job_id, config, terms)
+            _run_job(job_id, config, terms, start_ts)
         except Exception as e:
-            JOBS[job_id].update({"status": "error", "error": str(e)})
+            JOBS[job_id].update({"status": "error", "error": traceback.format_exc()})
+            print(traceback.format_exc(), flush=True)
             _save_job(job_id)
 
     t = Thread(target=_thread_target, daemon=True)

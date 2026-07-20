@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Text Search Results</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 24px; color: #222; }
+  h1 { margin-bottom: 4px; }
+  .meta { color: #666; margin-bottom: 20px; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #ddd; padding: 10px; vertical-align: top; text-align: left; }
+  th { background: #f4f4f4; }
+  tr:nth-child(even) { background: #fafafa; }
+  .term { background: #ffe680; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+  .count { text-align: center; font-weight: bold; }
+  a { color: #1565c0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  em { color: #444; font-style: normal; }
+</style>
+</head>
+<body>
+  <h1>Text Search Results</h1>
+  <div class="meta">
+    <div><strong>Start URL:</strong> https://example.com</div>
+    <div><strong>Pages crawled:</strong> 1</div>
+    <div><strong>Search terms:</strong> example</div>
+    <div><strong>Total matches found:</strong> 1</div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>URL</th>
+        <th>Page Title</th>
+        <th>Term</th>
+        <th>Count</th>
+        <th>Snippets</th>
+      </tr>
+    </thead>
+    <tbody>
+        <tr>
+          <td><a href="https://example.com" target="_blank">https://example.com</a></td>
+          <td>Example Domain</td>
+          <td><span class="term">example</span></td>
+          <td class="count">1</td>
+          <td><em>…&lt;mark&gt;Example&lt;/mark&gt; Domain  This domain is for use in docum…</em></td>
+        </tr>
+    </tbody>
+  </table>
+</body>
+</html>

@@ -1,9 +1,26 @@
-# TODO - Fix internal crawling (BFS) up to max_pages
+# TODO - Fix Crawl Status & Progress Issues
 
-- [x] Update `crawler.py` visited/duplicate logic to key by `final_url` after redirects (normalize_url(page.url)) instead of the pre-navigation queued URL.
-- [x] Fix crawler exception indentation / flow so errors don’t prematurely abort crawl.
-- [x] Persist background job status to disk in `app.py` so Render Free doesn’t lose `/job/<id>/status` across processes (fixes Pages Crawled staying 0).
-- [x] Verify inner page crawling reaches `max_pages` (e.g., 15) on a real site like books.toscrape.com.
-- [x] Ensure CSV + HTML generation still works after job status persistence.
-- [x] Fix `app.py` missing `redirect`/`url_for` imports and `show_results` route for background job polling.
-- [x] Fix `app.py` `show_results` route to pass `start_url` and `terms` from job state.
+## Completed Steps
+- [x] Plan approved by user
+
+# TODO - Fix Crawl Status & Progress Issues
+
+## All Steps Completed ✅
+
+### 1. crawler.py - Add debug logging & progress callback support
+- [x] Add print statements at key points in `crawl()` for debugging
+- [x] Accept an optional `progress_callback` parameter to update pages_crawled in real-time
+
+### 2. app.py - Fix thread target & exception handling
+- [x] Remove premature duration save before crawl starts
+- [x] Add `import traceback` and capture full stack trace in `_run_job()`
+- [x] Pass progress callback to `crawl()` to update `JOBS[job_id]` during crawl
+- [x] Move duration calculation to after crawl completes
+- [x] Fix duration being `None` in results (moved duration calc into `_run_job()`)
+
+### 3. templates/results.html - Fix JavaScript polling
+- [x] Update JS to dynamically show progress with pages_crawled from status endpoint
+- [x] When job completes, dynamically render results instead of `window.location.reload()`
+- [x] Show proper "Crawling… (X pages)" during crawl
+- [x] Show current URL being crawled in progress display
+- [x] Add error handling for network failures during polling

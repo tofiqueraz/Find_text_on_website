@@ -211,7 +211,15 @@ def find_term_matches(text, compiled_terms):
     return results
 
 
-def crawl(config):
+def crawl(config, progress_callback=None):
+    """Crawl website and find search terms.
+
+    Args:
+        config: Dictionary with crawl configuration.
+        progress_callback: Optional callable(pages_crawled, current_url) for real-time progress updates.
+    """
+    print("========== CRAWL START ==========", flush=True)
+    print(f"Start URL: {config['start_url']}", flush=True)
     start_time_overall = time.time()
     start_url = normalize_url(config["start_url"])
 
@@ -244,6 +252,7 @@ def crawl(config):
     # overall request takes too long. Keep a global budget.
     max_total_runtime_s = float(config.get("max_total_runtime_s", 80))
 
+    print(f"Initial Queue: {len(queue)}", flush=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -288,6 +297,7 @@ def crawl(config):
                         break
 
                     url = queue.popleft()
+                    print(f"Crawling: {url}", flush=True)
 
                     # NOTE: Do not mark visited until after page.goto(), because
                     # many sites redirect (http->https, add/remove www, etc.).
@@ -301,6 +311,7 @@ def crawl(config):
 
                         page = context.new_page()
                         page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                        print(f"Loaded: {page.url}", flush=True)
 
                         # Render may populate key content after DOMContentLoaded.
                         # Keep waits very small on Render Free (1 CPU / 512MB).
@@ -328,6 +339,10 @@ def crawl(config):
 
                         visited.add(final_url)
                         print(f"[{len(visited)}/{max_pages}] Crawling: {final_url}")
+
+                        # Report progress to caller (e.g., Flask job status).
+                        if progress_callback:
+                            progress_callback(len(visited), final_url)
 
                         root_netloc = urlparse(final_url).netloc
 
@@ -372,6 +387,8 @@ def crawl(config):
                             except Exception:
                                 html_content = ""
                             links = list(extract_links(html_content, final_url))
+
+                        print(f"Found {len(links)} links", flush=True)
 
                         # Cap link count per page.
                         if links:
@@ -484,6 +501,10 @@ def crawl(config):
 
         finally:
             browser.close()
+
+    print(f"Visited: {len(visited)}", flush=True)
+    print(f"Abort Reason: {abort_reason}", flush=True)
+    print("========== CRAWL END ==========", flush=True)
 
     return findings, visited, abort_reason
 

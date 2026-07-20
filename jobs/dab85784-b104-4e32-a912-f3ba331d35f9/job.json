@@ -1,0 +1,1 @@
+{"status": "done", "start_url": "https://example.com", "terms": ["example"], "duration": 2.9, "csv_ready": true, "html_ready": true, "started_at": 1784567871.213002, "pages_crawled": 1, "current_url": "https://example.com", "abort_reason": null, "total_hits": 1}

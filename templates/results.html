@@ -123,29 +123,53 @@
   </div>
 
   <div id="job-progress" style="margin-bottom:16px;">
-    Loading crawl job…
+    {% if status == 'running' %}
+      Loading crawl job…
+    {% elif status == 'error' %}
+      Crawl failed: unknown error
+    {% endif %}
   </div>
 
   <script>
     const jobId = {{ job_id | tojson }};
-    async function poll() {
-      const r = await fetch(`/job/${jobId}/status`);
-      const data = await r.json();
-      if (!data || data.status === 'not_found') return;
-      if (data.status === 'running') {
-        document.getElementById('job-progress').textContent = `Crawling… (${data.pages_crawled ?? 0} pages)`;
-        setTimeout(poll, 1000);
-        return;
-      }
-      if (data.status === 'error') {
-        document.getElementById('job-progress').textContent = `Crawl failed: ${data.error || 'unknown error'}`;
-        return;
-      }
+    const initialStatus = {{ status | tojson }};
 
-      // Job done: reload page to allow server-side download links.
-      window.location.reload();
+    async function poll() {
+      try {
+        const r = await fetch(`/job/${jobId}/status`);
+        const data = await r.json();
+        if (!data || data.status === 'not_found') return;
+
+        const progressEl = document.getElementById('job-progress');
+
+        if (data.status === 'running') {
+          const pages = data.pages_crawled ?? 0;
+          const url = data.current_url || '';
+          progressEl.textContent = `Crawling… (${pages} pages)`;
+          if (url) {
+            progressEl.innerHTML = `Crawling… (${pages} pages) — <small>${url}</small>`;
+          }
+          setTimeout(poll, 1000);
+          return;
+        }
+
+        if (data.status === 'error') {
+          progressEl.innerHTML = `<strong>Crawl failed:</strong> ${data.error || 'unknown error'}`;
+          return;
+        }
+
+        // Job done: reload page to get fresh server-rendered content with download links.
+        window.location.reload();
+      } catch (err) {
+        // Retry on network error.
+        setTimeout(poll, 2000);
+      }
     }
-    setTimeout(poll, 10);
+
+    // Only start polling if the job is still running.
+    if (initialStatus === 'running') {
+      setTimeout(poll, 10);
+    }
   </script>
 
   {% if findings %}
