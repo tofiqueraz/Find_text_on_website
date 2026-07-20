@@ -1,10 +1,11 @@
 import html
+import json
 import re
 import time
 from pathlib import Path
 
 from flask import (
-    Flask, render_template, request, send_file, abort
+    Flask, redirect, render_template, request, send_file, url_for, abort
 )
 
 from crawler import crawl, write_csv, write_html
@@ -171,6 +172,8 @@ def do_crawl():
     # Initialize job state.
     JOBS[job_id] = {
         "status": "running",
+        "start_url": url,
+        "terms": terms,
         "duration": None,
         "csv_ready": False,
         "html_ready": False,
@@ -190,11 +193,62 @@ def do_crawl():
     t = Thread(target=_thread_target, daemon=True)
     t.start()
 
-    # Redirect to results polling page (client will poll /job/<id>/status).
-    # Keep the UI unchanged visually; server will render empty results until job completes.
-    return render_template("results.html", job_id=job_id, findings=[], pages_crawled=0, total_hits=0, duration=0, start_url=url, terms=terms)
+    # Redirect to GET-based results page to avoid POST re-submit on reload.
+    return redirect(url_for("show_results", job_id=job_id))
 
 
+
+
+@app.route("/results/<job_id>", methods=["GET"])
+def show_results(job_id):
+    """GET-based results page. Renders immediately; polls /job/<id>/status."""
+    job = JOBS.get(job_id)
+    if not job:
+        job = _load_job(job_id)
+        if not job:
+            return render_template("index.html", error="Job not found.")
+        JOBS[job_id] = job
+
+    start_url = job.get("start_url", "")
+    terms = job.get("terms", [])
+    pages_crawled = 0
+    total_hits = 0
+    duration = 0
+    findings = []
+    csv_available = False
+    html_available = False
+    abort_reason = None
+    file_warning = None
+    status = job.get("status", "running")
+
+    if status == "done":
+        job_path = _job_dir(job_id)
+        csv_path = job_path / "results.csv"
+        html_path = job_path / "results.html"
+        csv_available = csv_path.exists()
+        html_available = html_path.exists()
+
+        pages_crawled = job.get("pages_crawled", 0)
+        total_hits = job.get("total_hits", 0)
+        duration = job.get("duration", 0)
+        abort_reason = job.get("abort_reason")
+        findings = []
+
+    return render_template(
+        "results.html",
+        job_id=job_id,
+        status=status,
+        pages_crawled=pages_crawled,
+        findings=findings,
+        total_hits=total_hits,
+        duration=duration,
+        start_url=start_url,
+        terms=terms,
+        csv_available=csv_available,
+        html_available=html_available,
+        abort_reason=abort_reason,
+        file_warning=file_warning,
+    )
 
 
 @app.route("/job/<job_id>/status", methods=["GET"])
