@@ -1,21 +1,18 @@
 import html
-import json
 import re
 import time
 from pathlib import Path
 
 from flask import (
-    Flask, redirect, render_template, request, send_file, url_for, abort
+    Flask, render_template, request, send_file, abort
 )
 
 from crawler import crawl, write_csv, write_html
-
 
 app = Flask(__name__)
 PROJECT_DIR = Path(__file__).parent
 CSV_PATH = PROJECT_DIR / "results.csv"
 HTML_PATH = PROJECT_DIR / "results.html"
-JOBS_DIR = PROJECT_DIR / "jobs"
 
 
 def parse_terms(raw):
@@ -43,278 +40,94 @@ def favicon():
 
 
 
-# --- Background crawl job system (prevents Render worker timeouts) ---
-import uuid
-from threading import Thread
-
-# In-memory job store (Render Free may still run multiple processes).
-JOBS = {}
-
-
-def _job_dir(job_id: str) -> Path:
-    d = PROJECT_DIR / "jobs" / job_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _job_status_path(job_id: str) -> Path:
-    # Persist status to disk so /job/<id>/status works even if
-    # requests hit different Render processes.
-    return _job_dir(job_id) / "job.json"
-
-
-def _save_job(job_id: str) -> None:
-    job = JOBS.get(job_id)
-    if not job:
-        return
-    path = _job_status_path(job_id)
-    # Best-effort atomic-ish write.
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
-
-
-def _load_job(job_id: str) -> dict | None:
-    path = _job_status_path(job_id)
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-import traceback
-
-
-def _progress_callback(job_id: str, pages_crawled: int, current_url: str):
-    """Update in-memory and on-disk job state with crawl progress."""
-    if job_id in JOBS:
-        JOBS[job_id]["pages_crawled"] = pages_crawled
-        JOBS[job_id]["current_url"] = current_url
-        _save_job(job_id)
-
-
-def _run_job(job_id: str, config: dict, terms: list[str], start_ts: float):
-    try:
-        # Create a closure that captures job_id for progress updates.
-        def progress(pages, url):
-            _progress_callback(job_id, pages, url)
-
-        findings, visited, abort_reason = crawl(config, progress_callback=progress)
-
-        # Highlight snippets once for HTML output.
-        for row in findings:
-            row["snippets"] = [highlight_snippet(s, terms) for s in row["snippets"]]
-            try:
-                row["count"] = int(row.get("count", 0))
-            except Exception:
-                row["count"] = 0
-
-        total_hits = sum(r["count"] for r in findings)
-
-        job_path = _job_dir(job_id)
-        csv_path = job_path / "results.csv"
-        html_path = job_path / "results.html"
-
-        write_csv(findings, str(csv_path))
-        write_html(
-            findings,
-            str(html_path),
-            config["start_url"],
-            len(visited),
-            terms,
-        )
-
-        duration = round(time.time() - start_ts, 1)
-        JOBS[job_id].update(
-            {
-                "status": "done",
-                "abort_reason": abort_reason,
-                "pages_crawled": len(visited),
-                "total_hits": total_hits,
-                "duration": duration,
-                "csv_ready": True,
-                "html_ready": True,
-            }
-        )
-        _save_job(job_id)
-    except Exception as e:
-        JOBS[job_id].update({"status": "error", "error": traceback.format_exc()})
-        print(traceback.format_exc(), flush=True)
-        _save_job(job_id)
-
-
 @app.route("/crawl", methods=["POST"])
 def do_crawl():
     url = request.form.get("url", "").strip()
-
     terms_raw = request.form.get("terms", "")
     terms = parse_terms(terms_raw)
     timeout = int(request.form.get("timeout", 30) or 30)
 
     if not url:
-        return render_template(
-            "index.html",
-            error="Please enter a URL.",
-            url=url,
-            terms=terms_raw,
-            timeout=timeout,
-        )
+        return render_template("index.html", error="Please enter a URL.",
+                               url=url, terms=terms_raw, timeout=timeout)
     if not terms:
-        return render_template(
-            "index.html",
-            error="Please enter at least one search term.",
-            url=url,
-            terms=terms_raw,
-            timeout=timeout,
-        )
-
-    job_id = str(uuid.uuid4())
-    start_ts = time.time()
+        return render_template("index.html", error="Please enter at least one search term.",
+                               url=url, terms=terms_raw, timeout=timeout)
 
     config = {
         "start_url": url,
         "search_terms": terms,
-        "max_pages": 20,
-        "max_queue_size": 120,
-        "max_findings": 200,
+        # Render instances often have tight memory limits; a very high max_pages can OOM-kill the worker.
+        # Keeping this conservative helps avoid SIGKILL while preserving core functionality.
+        "max_pages": 500,
         "same_domain_only": True,
         "case_sensitive": False,
         "headless": True,
-        "timeout_ms": min(timeout * 1000, 12000),
-        "max_total_runtime_s": 70,
+        "timeout_ms": timeout * 1000,
     }
 
-    # Initialize job state.
-    JOBS[job_id] = {
-        "status": "running",
-        "start_url": url,
-        "terms": terms,
-        "duration": None,
-        "csv_ready": False,
-        "html_ready": False,
-        "started_at": start_ts,
-    }
-    _save_job(job_id)
+    start_time = time.time()
+    try:
+        findings, visited, abort_reason = crawl(config)
+    except Exception as e:
+        return render_template("index.html",
+                               error=f"Crawl failed: {e}",
+                               url=url, terms=terms_raw, timeout=timeout)
+    duration = round(time.time() - start_time, 1)
 
-    def _thread_target():
-        try:
-            _run_job(job_id, config, terms, start_ts)
-        except Exception as e:
-            JOBS[job_id].update({"status": "error", "error": traceback.format_exc()})
-            print(traceback.format_exc(), flush=True)
-            _save_job(job_id)
-
-    t = Thread(target=_thread_target, daemon=True)
-    t.start()
-
-    # Redirect to GET-based results page to avoid POST re-submit on reload.
-    return redirect(url_for("show_results", job_id=job_id))
-
-
-
-
-@app.route("/results/<job_id>", methods=["GET"])
-def show_results(job_id):
-    """GET-based results page. Renders immediately; polls /job/<id>/status."""
-    job = JOBS.get(job_id)
-    if not job:
-        job = _load_job(job_id)
-        if not job:
-            return render_template("index.html", error="Job not found.")
-        JOBS[job_id] = job
-
-    start_url = job.get("start_url", "")
-    terms = job.get("terms", [])
-    pages_crawled = 0
-    total_hits = 0
-    duration = 0
-    findings = []
+    file_warning = None
     csv_available = False
     html_available = False
-    abort_reason = None
-    file_warning = None
-    status = job.get("status", "running")
+    try:
+        write_csv(findings, str(CSV_PATH))
+        csv_available = True
+    except Exception as e:
+        file_warning = f"Could not write results.csv ({e}). Results are still shown below."
+        print(f"WARN: CSV write failed: {e}")
+    try:
+        write_html(findings, str(HTML_PATH), url, len(visited), terms)
+        html_available = True
+    except Exception as e:
+        file_warning = (file_warning or "") + f" HTML file write also failed: {e}"
+        print(f"WARN: HTML write failed: {e}")
 
-    if status == "done":
-        job_path = _job_dir(job_id)
-        csv_path = job_path / "results.csv"
-        html_path = job_path / "results.html"
-        csv_available = csv_path.exists()
-        html_available = html_path.exists()
+    for row in findings:
+        row["snippets"] = [highlight_snippet(s, terms) for s in row["snippets"]]
+        # Ensure numeric/str counts render even if crawler returns unexpected types.
+        try:
+            row["count"] = int(row.get("count", 0))
+        except Exception:
+            row["count"] = 0
 
-        pages_crawled = job.get("pages_crawled", 0)
-        total_hits = job.get("total_hits", 0)
-        duration = job.get("duration", 0)
-        abort_reason = job.get("abort_reason")
-        findings = []
+
+    total_hits = sum(r["count"] for r in findings)
 
     return render_template(
         "results.html",
-        job_id=job_id,
-        status=status,
-        pages_crawled=pages_crawled,
         findings=findings,
+        pages_crawled=len(visited),
         total_hits=total_hits,
         duration=duration,
-        start_url=start_url,
+        start_url=url,
         terms=terms,
-        csv_available=csv_available,
-        html_available=html_available,
         abort_reason=abort_reason,
         file_warning=file_warning,
+        csv_available=csv_available,
+        html_available=html_available,
     )
-
-
-@app.route("/job/<job_id>/status", methods=["GET"])
-def job_status(job_id):
-    job = JOBS.get(job_id)
-    if not job:
-        # Fallback to disk (cross-process support).
-        job = _load_job(job_id)
-        if not job:
-            return {"status": "not_found"}, 404
-        JOBS[job_id] = job
-    return job
 
 
 @app.route("/download/<fmt>")
 def download(fmt):
-    # Backwards-compat: serve the latest completed results.
-    if not JOBS:
-        abort(404)
-
-    # Pick the most recently finished job.
-    finished = [j for j in JOBS.values() if j.get("status") == "done" and (j.get("csv_ready") or j.get("html_ready"))]
-    if not finished:
-        abort(404)
-
-    latest_job_id = None
-    latest_started = -1
-    for jid, job in JOBS.items():
-        if job.get("status") == "done" and job.get("started_at", 0) > latest_started:
-            latest_started = job.get("started_at", 0)
-            latest_job_id = jid
-
-    if not latest_job_id:
-        abort(404)
-
-    job_path = _job_dir(latest_job_id)
-
     if fmt == "csv":
-        csv_path = job_path / "results.csv"
-        if not csv_path.exists():
+        if not CSV_PATH.exists():
             abort(404)
-        return send_file(csv_path, as_attachment=True, download_name="results.csv")
+        return send_file(CSV_PATH, as_attachment=True, download_name="results.csv")
     if fmt == "html":
-        html_path = job_path / "results.html"
-        if not html_path.exists():
+        if not HTML_PATH.exists():
             abort(404)
-        return send_file(html_path, as_attachment=True, download_name="results.html")
-
+        return send_file(HTML_PATH, as_attachment=True, download_name="results.html")
     abort(404)
-
 
 
 if __name__ == "__main__":
