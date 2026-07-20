@@ -462,13 +462,13 @@ def crawl(config):
                         import traceback
                         traceback.print_exc()
 
-                    # Don’t let one bad page kill the crawl.
-
+                        # Don’t let one bad page kill the crawl.
                         consecutive_failures += 1
 
                         if consecutive_failures >= max_consecutive_failures:
                             abort_reason = "Too many errors"
                             break
+
 
                     finally:
                         if page:

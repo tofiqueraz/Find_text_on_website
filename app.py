@@ -14,6 +14,7 @@ app = Flask(__name__)
 PROJECT_DIR = Path(__file__).parent
 CSV_PATH = PROJECT_DIR / "results.csv"
 HTML_PATH = PROJECT_DIR / "results.html"
+JOBS_DIR = PROJECT_DIR / "jobs"
 
 
 def parse_terms(raw):
@@ -45,7 +46,7 @@ def favicon():
 import uuid
 from threading import Thread
 
-# In-memory job store (Render Free uses a single process).
+# In-memory job store (Render Free may still run multiple processes).
 JOBS = {}
 
 
@@ -53,6 +54,33 @@ def _job_dir(job_id: str) -> Path:
     d = PROJECT_DIR / "jobs" / job_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _job_status_path(job_id: str) -> Path:
+    # Persist status to disk so /job/<id>/status works even if
+    # requests hit different Render processes.
+    return _job_dir(job_id) / "job.json"
+
+
+def _save_job(job_id: str) -> None:
+    job = JOBS.get(job_id)
+    if not job:
+        return
+    path = _job_status_path(job_id)
+    # Best-effort atomic-ish write.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_job(job_id: str) -> dict | None:
+    path = _job_status_path(job_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _run_job(job_id: str, config: dict, terms: list[str]):
@@ -93,8 +121,10 @@ def _run_job(job_id: str, config: dict, terms: list[str]):
                 "html_ready": True,
             }
         )
+        _save_job(job_id)
     except Exception as e:
         JOBS[job_id].update({"status": "error", "error": str(e)})
+        _save_job(job_id)
 
 
 @app.route("/crawl", methods=["POST"])
@@ -146,13 +176,16 @@ def do_crawl():
         "html_ready": False,
         "started_at": start_ts,
     }
+    _save_job(job_id)
 
     def _thread_target():
         try:
             JOBS[job_id]["duration"] = round(time.time() - start_ts, 1)
+            _save_job(job_id)
             _run_job(job_id, config, terms)
         except Exception as e:
             JOBS[job_id].update({"status": "error", "error": str(e)})
+            _save_job(job_id)
 
     t = Thread(target=_thread_target, daemon=True)
     t.start()
@@ -168,7 +201,11 @@ def do_crawl():
 def job_status(job_id):
     job = JOBS.get(job_id)
     if not job:
-        return {"status": "not_found"}, 404
+        # Fallback to disk (cross-process support).
+        job = _load_job(job_id)
+        if not job:
+            return {"status": "not_found"}, 404
+        JOBS[job_id] = job
     return job
 
 
