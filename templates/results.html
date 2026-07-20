@@ -122,8 +122,35 @@
     </div>
   </div>
 
+  <div id="job-progress" style="margin-bottom:16px;">
+    Loading crawl job…
+  </div>
+
+  <script>
+    const jobId = {{ job_id | tojson }};
+    async function poll() {
+      const r = await fetch(`/job/${jobId}/status`);
+      const data = await r.json();
+      if (!data || data.status === 'not_found') return;
+      if (data.status === 'running') {
+        document.getElementById('job-progress').textContent = `Crawling… (${data.pages_crawled ?? 0} pages)`;
+        setTimeout(poll, 1000);
+        return;
+      }
+      if (data.status === 'error') {
+        document.getElementById('job-progress').textContent = `Crawl failed: ${data.error || 'unknown error'}`;
+        return;
+      }
+
+      // Job done: reload page to allow server-side download links.
+      window.location.reload();
+    }
+    setTimeout(poll, 10);
+  </script>
+
   {% if findings %}
   <table>
+
     <thead>
       <tr>
         <th style="width: 30%">URL</th>
